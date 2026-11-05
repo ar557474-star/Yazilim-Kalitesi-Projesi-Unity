@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.Events;
-
+///ahmed
 /// <summary>
 /// Müşteri teslimat noktası (Customer) veya Kargo Aracı yükleme alanı (Truck) bileşeni.
 /// Trigger Collider içeren bölge objelerine eklenir.
