@@ -9,7 +9,7 @@ public class PlayerAnimations : MonoBehaviour
         Instance = this;
         playerAnimator = GetComponent<Animator>();
     }
-
+    //ahmet
     public void WalkAnim(bool b)
     {
         playerAnimator.SetBool("Walk", b);
