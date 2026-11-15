@@ -24,7 +24,15 @@ public class PlayerMovement : MonoBehaviour
     {
         //inputVector = GameInput.Instance.GetMovementVector();
         inputVector = gameInput.GetMovementVector();
-        Vector3 moveDir = new Vector3(inputVector.x, 0f, inputVector.y);
+        //Vector3 moveDir = new Vector3(inputVector.x, 0f, inputVector.y);
+
+        //
+        moveDir = transform.right * inputVector.x +
+          transform.forward * inputVector.y;
+        moveDir.y = 0f;
+        moveDir.Normalize();
+
+
         playerTransform.position += moveDir * Time.deltaTime * 3;
 
         playerTransform.forward = Vector3.Slerp(transform.forward, moveDir, Time.deltaTime);//player Rotation

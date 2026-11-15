@@ -14,4 +14,10 @@ public class PlayerAnimations : MonoBehaviour
     {
         playerAnimator.SetBool("Walk", b);
     }
+    
+    public void CarryAnim(bool isCarrying)
+    {
+        
+        playerAnimator.SetBool("Carry", isCarrying);
+    }
 }

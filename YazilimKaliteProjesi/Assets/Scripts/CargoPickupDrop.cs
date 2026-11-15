@@ -215,6 +215,8 @@ public class CargoPickupDrop : MonoBehaviour
         heldBox.transform.localRotation = Quaternion.identity;
 
         Debug.Log($"[KARGO ALINDI] '{heldBox.name}' alındı.");
+        //carry anim
+        PlayerAnimations.Instance.CarryAnim(true);
     }
 
     /// <summary>
@@ -436,6 +438,8 @@ public class CargoPickupDrop : MonoBehaviour
         heldBox = null;
         heldBoxRb = null;
         heldBoxCollider = null;
+        //carry anim
+        PlayerAnimations.Instance.CarryAnim(false);
         return box;
     }
 
