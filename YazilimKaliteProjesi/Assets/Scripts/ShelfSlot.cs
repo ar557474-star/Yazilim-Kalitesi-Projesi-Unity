@@ -2,15 +2,19 @@ using UnityEngine;
 
 /// <summary>
 /// Rafların (Shelf) her bir katına veya bölmesine yerleştirilen Trigger alanı.
-/// Kutuların rafa nizami oturmasını ve raftan geri alınmasını yönetir.
+/// Kutuların rafa nizami oturmasını, raftan geri alınmasını ve yeşil yerleştirme önizlemesini (Highlight) yönetir.
 /// </summary>
 [RequireComponent(typeof(Collider))]
 public class ShelfSlot : MonoBehaviour
 {
-    [Header("Slot Noktası ve Durumu")]
+    [Header("Slot Noktası ve Görsel Önizleme (Highlight)")]
     [Tooltip("Kargonun raf üzerinde tam olarak oturacağı Transform noktası (Boş bırakılırsa bu objenin kendi Transform'u kullanılır).")]
     [SerializeField] private Transform slotPoint;
 
+    [Tooltip("Oyuncu elinde kutuyla yaklaştığında açılacak yarı şeffaf yeşil önizleme objesi (Cube / Quad).")]
+    [SerializeField] private GameObject highlightVisual;
+
+    [Header("Slot Durumu (Salt Okunur / Başlangıç Ataması)")]
     [Tooltip("Bu raf bölmesinde şu an kargo var mı?")]
     [SerializeField] private bool isOccupied = false;
 
@@ -19,9 +23,16 @@ public class ShelfSlot : MonoBehaviour
 
     // Dolu mu kontrolü (Hem bool hem de referans doğrulaması yapar)
     public bool IsOccupied => isOccupied && currentBox != null;
+
+    // Slotta duran mevcut kargo kutusu referansı
     public GameObject CurrentBox => currentBox;
+
+    // Kargonun yerleşeceği hedef nokta
     public Transform SlotPoint => slotPoint != null ? slotPoint : transform;
 
+    /// <summary>
+    /// Bileşen ilk eklendiğinde Collider'ı otomatik olarak Trigger yapar.
+    /// </summary>
     private void Reset()
     {
         Collider col = GetComponent<Collider>();
@@ -31,6 +42,9 @@ public class ShelfSlot : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Oyun başladığında slotun kendi görünümünü gizler, yeşil önizlemeyi kapatır ve başlangıç kutusu varsa yerleştirir.
+    /// </summary>
     private void Awake()
     {
         if (slotPoint == null)
@@ -38,6 +52,7 @@ public class ShelfSlot : MonoBehaviour
             slotPoint = transform;
         }
 
+        // 1. Trigger Collider kontrolü
         Collider col = GetComponent<Collider>();
         if (col != null && !col.isTrigger)
         {
@@ -45,7 +60,20 @@ public class ShelfSlot : MonoBehaviour
             col.isTrigger = true;
         }
 
-        // Eğer sahne başında slota bir kutu atanmışsa onu nizami oturt
+        // 2. Slot objesinin kendisinde bir MeshRenderer varsa oyun içinde görünmez yap (Trigger çalışmaya devam eder)
+        if (highlightVisual != gameObject)
+        {
+            MeshRenderer ownRenderer = GetComponent<MeshRenderer>();
+            if (ownRenderer != null)
+            {
+                ownRenderer.enabled = false;
+            }
+        }
+
+        // 3. Yeşil önizleme göstergesini oyun başında kapalı (SetActive(false)) duruma getir
+        SetHighlight(false);
+
+        // 4. Eğer sahne başında slota bir kutu atanmışsa onu nizami oturt
         if (currentBox != null)
         {
             PlaceBox(currentBox);
@@ -57,7 +85,35 @@ public class ShelfSlot : MonoBehaviour
     }
 
     /// <summary>
-    /// Kargo kutusunu bu raf slotuna nizami olarak yerleştirir.
+    /// Yeşil yerleştirme önizlemesini (highlightVisual) açar veya kapatır.
+    /// Slot doluysa güvenlik amacıyla önizleme her zaman kapalı tutulur.
+    /// </summary>
+    /// <param name="isActive">Önizleme aktif edilsin mi?</param>
+    public void SetHighlight(bool isActive)
+    {
+        // Slot doluysa yeşil önizleme kesinlikle gösterilmez
+        bool shouldShow = isActive && !IsOccupied;
+
+        if (highlightVisual != null)
+        {
+            // Eğer kullanıcı yanlışlıkla Slot objesinin kendisini atadıysa sadece MeshRenderer'ı aç/kapat (Collider kapanmasın)
+            if (highlightVisual == gameObject)
+            {
+                MeshRenderer ownRenderer = GetComponent<MeshRenderer>();
+                if (ownRenderer != null)
+                {
+                    ownRenderer.enabled = shouldShow;
+                }
+            }
+            else if (highlightVisual.activeSelf != shouldShow)
+            {
+                highlightVisual.SetActive(shouldShow);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Kargo kutusunu bu raf slotuna nizami olarak yerleştirir ve yeşil önizlemeyi kapatır.
     /// </summary>
     /// <param name="box">Yerleştirilecek kutu objesi.</param>
     /// <returns>Yerleştirme başarılıysa true döner.</returns>
@@ -67,6 +123,9 @@ public class ShelfSlot : MonoBehaviour
 
         currentBox = box;
         isOccupied = true;
+
+        // Slot dolduğu anda yeşil önizlemeyi otomatik kapat
+        SetHighlight(false);
 
         // 1. Kutunun fiziğini kinematik yap (raftan düşmemesi ve kaymaması için)
         Rigidbody rb = box.GetComponent<Rigidbody>();
@@ -93,6 +152,12 @@ public class ShelfSlot : MonoBehaviour
         box.transform.SetParent(targetPoint);
         box.transform.localPosition = Vector3.zero;
         box.transform.localRotation = Quaternion.identity;
+
+        // 4. Ürün Takip Sistemine kargonun rafa konulduğunu bildir
+        if (CargoTrackerManager.Instance != null)
+        {
+            CargoTrackerManager.Instance.SetCargoState(box, CargoState.Rafta);
+        }
 
         Debug.Log($"[RAFA KONULDU] '{box.name}', '{name}' raf bölmesine yerleştirildi.");
         return true;
@@ -122,6 +187,9 @@ public class ShelfSlot : MonoBehaviour
         isOccupied = false;
     }
 
+    /// <summary>
+    /// Scene penceresinde raf slotunun konumunu ve dolu/boş durumunu görselleştirir.
+    /// </summary>
     private void OnDrawGizmos()
     {
         Transform point = slotPoint != null ? slotPoint : transform;

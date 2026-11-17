@@ -6,7 +6,8 @@ using UnityEngine.InputSystem;
 
 /// <summary>
 /// Oyuncunun kargo kutularını (Box) yerden veya raflardan (ShelfSlot) almasını, taşımasını,
-/// boş raf slotlarına dizmesini, yere bırakmasını veya DeliveryZone (Müşteri / Kargo Aracı) alanlarına teslim etmesini yönetir.
+/// boş raf slotlarında yeşil önizleme (Highlight) göstermesini, kutuları rafa dizmesini,
+/// yere bırakmasını veya DeliveryZone (Müşteri / Kargo Aracı) alanlarına teslim etmesini yönetir.
 /// Player objesine eklenir.
 /// </summary>
 public class CargoPickupDrop : MonoBehaviour
@@ -54,19 +55,26 @@ public class CargoPickupDrop : MonoBehaviour
     public UnityEvent<int> onCustomerDeliveryCountChanged;
     public UnityEvent<int> onTruckLoadCountChanged;
 
-    // Şu an elde tutulan kutu referansı ve bileşenleri
+    // Şu an elde tutulan kutu referansı ve fizik bileşenleri
     private GameObject heldBox;
     private Rigidbody heldBoxRb;
     private Collider heldBoxCollider;
     private Collider[] playerColliders;
 
+    // Şu an yeşil önizlemesi (Highlight) açık olan boş raf slotu
+    private ShelfSlot currentHighlightedSlot;
+
     // Trigger üzerinden girilen aktif teslimat alanı
     private DeliveryZone activeTriggerZone;
 
+    // Dışarıdan okunabilir durum özellikleri
     public bool IsHoldingBox => heldBox != null;
     public int DeliveredToCustomerCount => deliveredToCustomerCount;
     public int LoadedToTruckCount => loadedToTruckCount;
 
+    /// <summary>
+    /// Başlangıçta oyuncu collider'larını alır ve HoldPoint atanmamışsa otomatik oluşturur.
+    /// </summary>
     private void Awake()
     {
         playerColliders = GetComponentsInChildren<Collider>();
@@ -83,8 +91,15 @@ public class CargoPickupDrop : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Her karede (frame) raf önizleme durumunu günceller ve etkileşim tuşunu (E) dinler.
+    /// </summary>
     private void Update()
     {
+        // 1. Elde kargo varsa en yakın boş raf slotunun yeşil önizlemesini güncelle
+        UpdateShelfHighlight();
+
+        // 2. E tuşuna basıldıysa alma veya yerleştirme/bırakma işlemini çalıştır
         if (IsInteractKeyPressed())
         {
             if (!IsHoldingBox)
@@ -95,6 +110,60 @@ public class CargoPickupDrop : MonoBehaviour
             {
                 TryPlaceDeliverOrDropBox();
             }
+        }
+    }
+
+    /// <summary>
+    /// Obje devre dışı kalırsa açık kalan yeşil önizlemeyi güvenli şekilde kapatır.
+    /// </summary>
+    private void OnDisable()
+    {
+        ClearActiveHighlight();
+    }
+
+    /// <summary>
+    /// Sadece oyuncunun elinde bir kargo kutusu varken ve menzilde boş bir raf slotu bulunduğunda
+    /// o slotun yeşil önizleme göstergesini (highlightVisual) aktif tutar; aksi halde kapatır.
+    /// </summary>
+    private void UpdateShelfHighlight()
+    {
+        // Oyuncunun elinde kutu yoksa hiçbir raf slotunda yeşil önizleme gösterilmez
+        if (!IsHoldingBox)
+        {
+            ClearActiveHighlight();
+            return;
+        }
+
+        // Menzildeki ve oyuncunun baktığı yöndeki en yakın boş raf slotunu bul
+        ShelfSlot targetEmptySlot = FindBestShelfSlot(requireOccupied: false);
+
+        // Hedef slot değiştiyse eski slotun yeşil göstergesini kapat
+        if (targetEmptySlot != currentHighlightedSlot)
+        {
+            if (currentHighlightedSlot != null)
+            {
+                currentHighlightedSlot.SetHighlight(false);
+            }
+
+            currentHighlightedSlot = targetEmptySlot;
+        }
+
+        // Yeni hedef boş slot varsa yeşil göstergesini aç
+        if (currentHighlightedSlot != null)
+        {
+            currentHighlightedSlot.SetHighlight(true);
+        }
+    }
+
+    /// <summary>
+    /// Aktif olan yeşil raf önizlemesini kapatır ve referansı temizler.
+    /// </summary>
+    private void ClearActiveHighlight()
+    {
+        if (currentHighlightedSlot != null)
+        {
+            currentHighlightedSlot.SetHighlight(false);
+            currentHighlightedSlot = null;
         }
     }
 
@@ -157,7 +226,6 @@ public class CargoPickupDrop : MonoBehaviour
         }
 
         // 2. Ayrıca menzildeki dolu raf slotlarını (ShelfSlot) kontrol et
-        // (Kutu collider'ı küçük veya rafın içindeyse doğrudan ShelfSlot trigger'ından da alınabilsin)
         ShelfSlot occupiedSlot = FindBestShelfSlot(requireOccupied: true);
         if (occupiedSlot != null && occupiedSlot.CurrentBox != null)
         {
@@ -182,8 +250,9 @@ public class CargoPickupDrop : MonoBehaviour
     }
 
     /// <summary>
-    /// Seçilen kutuyu eldeki holdPoint'e sabitler, fiziğini kapatır ve çarpışmayı engeller.
+    /// Seçilen kutuyu eldeki holdPoint'e sabitler, fiziğini kapatır ve Ürün Takip Sistemine "Elde" olarak bildirir.
     /// </summary>
+    /// <param name="box">Ele alınacak kargo kutusu.</param>
     private void PickupBox(GameObject box)
     {
         heldBox = box;
@@ -214,9 +283,19 @@ public class CargoPickupDrop : MonoBehaviour
         heldBox.transform.localPosition = Vector3.zero;
         heldBox.transform.localRotation = Quaternion.identity;
 
+        // 4. Ürün Takip Sistemine kargonun "Elde" olduğunu bildir
+        if (CargoTrackerManager.Instance != null)
+        {
+            CargoTrackerManager.Instance.SetCargoState(heldBox, CargoState.Elde);
+        }
+
         Debug.Log($"[KARGO ALINDI] '{heldBox.name}' alındı.");
-        //carry anim
-        PlayerAnimations.Instance.CarryAnim(true);
+
+        // Taşıma animasyonunu tetikle
+        if (PlayerAnimations.Instance != null)
+        {
+            PlayerAnimations.Instance.CarryAnim(true);
+        }
     }
 
     /// <summary>
@@ -228,6 +307,9 @@ public class CargoPickupDrop : MonoBehaviour
     private void TryPlaceDeliverOrDropBox()
     {
         if (heldBox == null) return;
+
+        // Kutu elden çıkacağı için açık olan yeşil önizlemeyi kapat
+        ClearActiveHighlight();
 
         // 1. Öncelikle yakınlarda boş bir Raf Slotu (ShelfSlot) var mı kontrol et
         ShelfSlot emptyShelfSlot = FindBestShelfSlot(requireOccupied: false);
@@ -242,6 +324,7 @@ public class CargoPickupDrop : MonoBehaviour
                 SetIgnoreCollisionWithPlayer(boxCol, false);
             }
 
+            // PlaceBox metodu kutuyu rafa oturtur, yeşil highlight'ı kapatır ve durumu "Rafta" yapar
             emptyShelfSlot.PlaceBox(boxToPlace);
             return;
         }
@@ -255,6 +338,12 @@ public class CargoPickupDrop : MonoBehaviour
 
             if (targetZone.Type == DeliveryZone.ZoneType.Customer)
             {
+                // Ürün Takip Sistemine "MusteriyeTeslimEdildi" olarak bildir
+                if (CargoTrackerManager.Instance != null)
+                {
+                    CargoTrackerManager.Instance.SetCargoState(boxToProcess, CargoState.MusteriyeTeslimEdildi);
+                }
+
                 targetZone.ProcessCargo(boxToProcess);
                 deliveredToCustomerCount++;
                 onCustomerDeliveryCountChanged?.Invoke(deliveredToCustomerCount);
@@ -263,6 +352,12 @@ public class CargoPickupDrop : MonoBehaviour
             }
             else if (targetZone.Type == DeliveryZone.ZoneType.Truck)
             {
+                // Ürün Takip Sistemine "AracaYuklendi" olarak bildir
+                if (CargoTrackerManager.Instance != null)
+                {
+                    CargoTrackerManager.Instance.SetCargoState(boxToProcess, CargoState.AracaYuklendi);
+                }
+
                 targetZone.ProcessCargo(boxToProcess);
                 loadedToTruckCount++;
                 onTruckLoadCountChanged?.Invoke(loadedToTruckCount);
@@ -278,6 +373,11 @@ public class CargoPickupDrop : MonoBehaviour
 
             if (isFallbackCustomer)
             {
+                if (CargoTrackerManager.Instance != null)
+                {
+                    CargoTrackerManager.Instance.SetCargoState(boxToProcess, CargoState.MusteriyeTeslimEdildi);
+                }
+
                 deliveredToCustomerCount++;
                 onCustomerDeliveryCountChanged?.Invoke(deliveredToCustomerCount);
                 Debug.Log($"[MÜŞTERİ TESLİMATI] Kargo müşteriye teslim edildi! Toplam Teslimat: {deliveredToCustomerCount}");
@@ -286,6 +386,11 @@ public class CargoPickupDrop : MonoBehaviour
             }
             else if (isFallbackTruck)
             {
+                if (CargoTrackerManager.Instance != null)
+                {
+                    CargoTrackerManager.Instance.SetCargoState(boxToProcess, CargoState.AracaYuklendi);
+                }
+
                 loadedToTruckCount++;
                 onTruckLoadCountChanged?.Invoke(loadedToTruckCount);
 
@@ -400,7 +505,7 @@ public class CargoPickupDrop : MonoBehaviour
     }
 
     /// <summary>
-    /// Kutuyu karakterin önüne yere düzgünce bırakır ve fiziklerini tekrar aktif eder.
+    /// Kutuyu karakterin önüne yere düzgünce bırakır, fiziklerini aktif eder ve durumu "Yerde" olarak günceller.
     /// </summary>
     private void DropBoxToGround()
     {
@@ -429,20 +534,36 @@ public class CargoPickupDrop : MonoBehaviour
             rb.angularVelocity = Vector3.zero;
         }
 
+        // Ürün Takip Sistemine kargonun "Yerde" olduğunu bildir
+        if (CargoTrackerManager.Instance != null)
+        {
+            CargoTrackerManager.Instance.SetCargoState(boxToDrop, CargoState.Yerde);
+        }
+
         Debug.Log($"[KARGO BIRAKILDI] '{boxToDrop.name}' yere bırakıldı.");
     }
 
+    /// <summary>
+    /// Elde tutulan kutu referanslarını sıfırlar ve taşıma animasyonunu kapatır.
+    /// </summary>
     private GameObject ReleaseHeldBoxReference()
     {
         GameObject box = heldBox;
         heldBox = null;
         heldBoxRb = null;
         heldBoxCollider = null;
-        //carry anim
-        PlayerAnimations.Instance.CarryAnim(false);
+
+        if (PlayerAnimations.Instance != null)
+        {
+            PlayerAnimations.Instance.CarryAnim(false);
+        }
+
         return box;
     }
 
+    /// <summary>
+    /// Kutu ile oyuncu karakterinin collider'ları arasındaki fiziksel çarpışmayı açar veya kapatır.
+    /// </summary>
     private void SetIgnoreCollisionWithPlayer(Collider boxCol, bool ignore)
     {
         if (playerColliders == null || boxCol == null) return;
@@ -456,17 +577,26 @@ public class CargoPickupDrop : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Tag tanımlı olmasa bile hata fırlatmadan güvenli Tag kontrolü yapar.
+    /// </summary>
     private bool HasTagSafe(GameObject obj, string tagToCheck)
     {
         if (obj == null || string.IsNullOrEmpty(tagToCheck)) return false;
         return string.Equals(obj.tag, tagToCheck, System.StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Oyuncu bir DeliveryZone trigger alanına girdiğinde çağrılır.
+    /// </summary>
     public void SetCurrentZone(DeliveryZone zone)
     {
         activeTriggerZone = zone;
     }
 
+    /// <summary>
+    /// Oyuncu bir DeliveryZone trigger alanından çıktığında çağrılır.
+    /// </summary>
     public void ClearCurrentZone(DeliveryZone zone)
     {
         if (activeTriggerZone == zone)
@@ -475,6 +605,9 @@ public class CargoPickupDrop : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Scene penceresinde etkileşim menzilini ve taşıma noktasını görselleştirir.
+    /// </summary>
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.yellow;
